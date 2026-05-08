@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:TouristGuideBackend}",
+            "name": "Debug TouristGuideBackend",
+            "target": "TouristGuideBackend",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug TouristGuideBackend"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:TouristGuideBackend}",
+            "name": "Release TouristGuideBackend",
+            "target": "TouristGuideBackend",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release TouristGuideBackend"
+        }
+    ]
+}
