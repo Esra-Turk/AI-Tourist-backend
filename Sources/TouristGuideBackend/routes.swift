@@ -32,6 +32,18 @@ func routes(_ app: Application) throws {
 
     try app.register(collection: TodoController())
     try app.register(collection: AuthController())
+
+    func routes(_ app: Application) throws {
+    // ... mevcut route'lar ...
+    
+    try app.register(collection: TodoController())
+    try app.register(collection: AuthController())
+    
+    // Debug: kayıtlı tüm route'ları yazdır
+    for route in app.routes.all {
+        app.logger.info("Route: \(route.method) /\(route.path.map { "\($0)" }.joined(separator: "/"))")
+    }
+}
 }
 
 

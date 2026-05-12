@@ -22,6 +22,25 @@ struct AuthController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
         let auth = routes.grouped("auth")
         auth.post("apple", use: signInWithApple)
+    
+        // Korumalı route'lar
+    let protected = auth.grouped(UserJWTPayload.authenticator(), UserJWTPayload.guardMiddleware())
+    protected.get("me", use: me)
+    }
+
+    @Sendable
+    func me(req: Request) async throws -> UserDTO {
+        let payload = try req.auth.require(UserJWTPayload.self)
+        guard let userID = payload.userID,
+            let user = try await User.find(userID, on: req.db) else {
+                throw Abort(.notFound, reason: "Kullanici bulunamadi")
+            }
+
+            return UserDTO(
+                id: try user.requireID(),
+                email: user.email,
+                name: user.name
+            )
     }
 
     @Sendable

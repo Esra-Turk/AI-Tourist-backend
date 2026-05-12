@@ -8,4 +8,8 @@ struct UserJWTPayload: JWTPayload, Authenticatable {
     func verify(using algorithm: some JWTAlgorithm) async throws {
         try self.expiration.verifyNotExpired()
     }
+
+    var userID: UUID? {
+        UUID(uuidString: self.subject.value)
+    }
 }
