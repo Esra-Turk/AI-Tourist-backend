@@ -1,4 +1,5 @@
 import Foundation
+import Fluent
 import Vapor
 
 // iOS tarafıyla sabitlenmiş enum değerleri — değiştirilemez.
@@ -41,6 +42,8 @@ struct ScanController: RouteCollection {
 
     @Sendable
     func scan(req: Request) async throws -> ScanResponse {
+        let user = try req.auth.require(User.self)
+        let userID = try user.requireID()
         let input = try req.content.decode(ScanRequest.self)
 
         var buffer = input.image.data
@@ -107,6 +110,19 @@ struct ScanController: RouteCollection {
             duration: input.duration,
             on: req
         )
+
+        // 4. Tarama sonucunu kullanıcıya bağlı olarak kaydet.
+        let scan = Scan(
+            userID: userID,
+            placeName: placeName,
+            latitude: placeLatitude,
+            longitude: placeLongitude,
+            confidence: confidence,
+            narration: narration,
+            style: input.style.rawValue,
+            duration: input.duration.rawValue
+        )
+        try await scan.save(on: req.db)
 
         return ScanResponse(
             placeName: placeName,

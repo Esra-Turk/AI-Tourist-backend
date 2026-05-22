@@ -56,8 +56,9 @@ docker-compose up
 | `JWT_SECRET`           | JWT imzalama anahtarı (HMAC-SHA256)   | `dev-only-secret-change-in-production`  |
 | `APPLE_APP_BUNDLE_ID`  | Apple Sign In için uygulama bundle ID | —                                       |
 | `GOOGLE_API_KEY`       | Google Cloud Vision + Places API anahtarı | —                                   |
-| `OPENAI_API_KEY`       | OpenAI API anahtarı (anlatım üretimi) | —                                       |
-| `LLM_MODEL`            | Anlatım için kullanılan LLM modeli    | `gpt-4o`                                |
+| `OPENAI_API_KEY`       | OpenAI API anahtarı (anlatım üretimi + görsel mekan tanıma fallback'i) | —                  |
+| `LLM_MODEL`            | Anlatım için kullanılan OpenAI Chat Completions modeli | `gpt-4o`               |
+| `LLM_VISION_MODEL`     | Vision landmark tespiti boş döndüğünde fotoğraftan mekan tanımak için kullanılan multimodal model | `gpt-4o` |
 
 > **Not:** Üretim ortamında `JWT_SECRET` mutlaka değiştirilmelidir.
 
@@ -162,25 +163,53 @@ JWT gerektirir. Token'daki kullanıcıyı veritabanından siler.
 
 #### `POST /scan` — Fotoğraftan mekan tanıma ve sesli rehber anlatımı 🔒
 
-JWT gerektirir. `multipart/form-data` ile fotoğraf ve tercihler gönderilir.
+JWT gerektirir. `multipart/form-data` ile fotoğraf ve tercihler gönderilir (görselin ikili olarak taşınması gerektiği için saf JSON kullanılmaz).
 
-İstek alanları (`multipart/form-data`):
+**İstek şeması** (alanlar `multipart/form-data` part'ı olarak gönderilir; aşağıdaki JSON yapısı her bir part'ın mantıksal karşılığıdır):
+
+```jsonc
+{
+  "image":     "<binary JPEG>",   // zorunlu — multipart dosya part'ı
+  "latitude":  "41.0086",         // opsiyonel — string, ondalık derece
+  "longitude": "28.9802",         // opsiyonel — string, ondalık derece
+  "style":     "historical",      // zorunlu — "fun" | "historical" | "simple" | "detailed"
+  "duration":  "oneMinute"        // zorunlu — "thirtySeconds" | "oneMinute" | "threeMinutes"
+}
+```
 
 | Alan        | Tip          | Zorunlu | Açıklama                                          |
 |-------------|--------------|---------|---------------------------------------------------|
-| `image`     | JPEG dosyası | Evet    | Mekanın fotoğrafı                                 |
+| `image`     | JPEG dosyası | Evet    | Mekanın fotoğrafı (max 10 MB)                     |
 | `latitude`  | String       | Hayır   | Cihazın enlemi (ondalık derece)                   |
 | `longitude` | String       | Hayır   | Cihazın boylamı (ondalık derece)                  |
 | `style`     | String       | Evet    | `fun` \| `historical` \| `simple` \| `detailed`   |
 | `duration`  | String       | Evet    | `thirtySeconds` \| `oneMinute` \| `threeMinutes`  |
 
-İşleyiş:
+Örnek `curl`:
 
-1. Görsel Google Cloud Vision'a `LANDMARK_DETECTION` ile gönderilir.
-2. Koordinat geldiyse landmark adayları konuma göre teyit edilir. Vision hiç landmark bulamaz ve koordinat varsa Google Places nearby search ile en olası mekan bulunur.
-3. Tespit edilen mekan, `style` ve `duration`'a uygun bir anlatım için OpenAI Chat Completions API'ye verilir (sabit sistem talimatı OpenAI tarafından otomatik prompt caching'e tabidir).
+```bash
+curl -X POST https://<host>/scan \
+  -H "Authorization: Bearer <jwt-token>" \
+  -F "image=@hagia-sophia.jpg;type=image/jpeg" \
+  -F "latitude=41.0086" \
+  -F "longitude=28.9802" \
+  -F "style=historical" \
+  -F "duration=oneMinute"
+```
 
-Yanıt `200 OK`:
+İşleyiş — mekan tanıma 3 kademeli fallback ile yapılır:
+
+1. **Cloud Vision landmark detection** (`CLOUD_VISION`): Görsel Google Cloud Vision'a `LANDMARK_DETECTION` ile gönderilir. Koordinat geldiyse adaylardan kullanıcıya en yakını (haversine) seçilir; koordinat yoksa en yüksek skorlu aday. `confidence` doğrudan Vision skorudur (0–1).
+2. **LLM Vision fallback** (`LLM_VISION`): Vision hiç landmark bulamazsa görsel multimodal LLM'e (`LLM_VISION_MODEL`, varsayılan `gpt-4o`) gönderilir. Model emin değilse `UNKNOWN` döner ve bir sonraki adıma geçilir; emin olduğu durumlarda mekan adı tek satır olarak döner. Koordinat LLM'den gelmediği için kullanıcı koordinatı (varsa) yansıtılır. `confidence = 0.5`.
+3. **Places nearby search fallback** (`PLACES_NEARBY`): LLM de bulamazsa ve koordinat varsa Google Places nearby search ile en olası mekan bulunur. `confidence = 0.5`.
+
+Hiçbiri tutmazsa `422 Unprocessable Entity` döner.
+
+Tespit edilen mekan, `style` ve `duration`'a uygun bir anlatım için OpenAI Chat Completions API'ye (`LLM_MODEL`, varsayılan `gpt-4o`) verilir. Sabit sistem talimatı OpenAI tarafından otomatik prompt caching'e tabidir.
+
+Hangi yolun kullanıldığı sunucu loglarına yazılır (`[scan] place identified via ...`).
+
+**Başarılı yanıt** `200 OK` (`application/json`):
 
 ```json
 {
@@ -188,19 +217,35 @@ Yanıt `200 OK`:
   "confidence": 0.92,
   "latitude": 41.0086,
   "longitude": 28.9802,
-  "narration": "..."
+  "narration": "Stand before the soaring dome of Hagia Sophia and you stand at a crossroads of empires..."
 }
 ```
 
-- `confidence`: 0–1 arası Vision skoru. Places fallback'i kullanıldıysa 0.6'nın altında bir değer döner (iOS bu eşiğin altında "emin değiliz" uyarısı gösterir).
-- `latitude`/`longitude`: tespit edilen mekanın koordinatı; bilinmiyorsa `null`.
-- Anlatım İngilizce döner; `ScanResult` modelinde dil alanı yoktur.
+| Alan         | Tip            | Açıklama                                                                                                  |
+|--------------|----------------|-----------------------------------------------------------------------------------------------------------|
+| `placeName`  | String         | Tespit edilen mekanın adı.                                                                                |
+| `confidence` | Number (0–1)   | Cloud Vision yolunda Vision skoru; LLM Vision veya Places fallback'i kullanıldıysa sabit `0.5`.            |
+| `latitude`   | Number \| null | Tespit edilen mekanın enlemi; bilinmiyorsa `null`.                                                        |
+| `longitude`  | Number \| null | Tespit edilen mekanın boylamı; bilinmiyorsa `null`.                                                       |
+| `narration`  | String         | İngilizce sesli rehber metni. Dil alanı yoktur; uzunluk `duration`'a göre değişir.                        |
 
-Hatalar:
+iOS, `confidence < 0.6` olduğunda kullanıcıya "emin değiliz" uyarısı gösterir.
 
-- Mekan tanınamazsa `422 Unprocessable Entity`.
-- Token geçersiz/süresi dolmuşsa `401 Unauthorized`.
-- Vision/Places/LLM servisleri başarısız olursa `502 Bad Gateway`.
+**Hata yanıtları** (Vapor varsayılanı, `application/json`):
+
+```json
+{
+  "error": true,
+  "reason": "Couldn't identify a place in this photo."
+}
+```
+
+| Durum                          | Sebep                                                            |
+|--------------------------------|------------------------------------------------------------------|
+| `400 Bad Request`              | `image` part'ı eksik veya boş.                                   |
+| `401 Unauthorized`             | JWT eksik / geçersiz / süresi dolmuş veya kullanıcı silinmiş.    |
+| `422 Unprocessable Entity`     | Üç fallback de mekanı tanıyamadı.                                |
+| `502 Bad Gateway`              | Vision / Places / OpenAI servislerinden biri başarısız oldu.     |
 
 ### Todo (örnek/şablon)
 
@@ -233,7 +278,7 @@ Sources/TouristGuideBackend/
 ├── Services/
 │   ├── VisionService.swift     # Google Cloud Vision — landmark tespiti
 │   ├── PlacesService.swift     # Google Places — koordinat fallback'i
-│   └── NarrationService.swift  # LLM ile sesli rehber anlatımı üretimi
+│   └── NarrationService.swift  # OpenAI Chat Completions ile anlatım üretimi + LLM Vision mekan tanıma fallback'i
 ├── Middleware/
 │   └── UserAuthenticator.swift # JWT doğrular + kullanıcının DB'de varlığını kontrol eder
 ├── Models/
