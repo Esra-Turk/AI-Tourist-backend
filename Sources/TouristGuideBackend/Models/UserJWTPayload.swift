@@ -1,7 +1,7 @@
 import Vapor
 import JWT
 
-struct UserJWTPayload: JWTPayload, Authenticatable {
+struct UserJWTPayload: JWTPayload {
     var subject: SubjectClaim
     var expiration: ExpirationClaim
 

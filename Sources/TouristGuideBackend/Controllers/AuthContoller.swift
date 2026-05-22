@@ -24,34 +24,24 @@ struct AuthController: RouteCollection {
         auth.post("apple", use: signInWithApple)
     
         // Korumalı route'lar
-        let protected = auth.grouped(UserJWTPayload.authenticator(), UserJWTPayload.guardMiddleware())
+        let protected = auth.grouped(UserAuthenticator(), User.guardMiddleware())
         protected.get("me", use: me)
         protected.delete("me", use: deleteMe)
     }
 
     @Sendable
     func me(req: Request) async throws -> UserDTO {
-        let payload = try req.auth.require(UserJWTPayload.self)
-        guard let userID = payload.userID,
-            let user = try await User.find(userID, on: req.db) else {
-                throw Abort(.notFound, reason: "Kullanici bulunamadi")
-            }
-
-            return UserDTO(
-                id: try user.requireID(),
-                email: user.email,
-                name: user.name
-            )
+        let user = try req.auth.require(User.self)
+        return UserDTO(
+            id: try user.requireID(),
+            email: user.email,
+            name: user.name
+        )
     }
 
     @Sendable
     func deleteMe(req: Request) async throws -> HTTPStatus {
-        let payload = try req.auth.require(UserJWTPayload.self)
-        guard let userID = payload.userID,
-            let user = try await User.find(userID, on: req.db) else {
-                throw Abort(.notFound, reason: "Kullanici bulunamadi")
-            }
-
+        let user = try req.auth.require(User.self)
         try await user.delete(on: req.db)
         return .noContent
     }
