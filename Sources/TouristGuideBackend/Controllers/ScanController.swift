@@ -63,15 +63,32 @@ struct ScanController: RouteCollection {
 
         if let landmark = bestLandmark(from: candidates, near: userLatitude, userLongitude) {
             // 2a. Vision bir landmark buldu — skoru confidence olarak yansıtılır.
+            req.logger.info("[scan] place identified via CLOUD_VISION: \(landmark.name) (score=\(landmark.score))")
             placeName = landmark.name
             placeLatitude = landmark.latitude
             placeLongitude = landmark.longitude
             confidence = min(max(landmark.score, 0), 1)
+        } else if let identified = try await NarrationService.identifyPlace(
+            imageData: imageData,
+            latitude: userLatitude,
+            longitude: userLongitude,
+            on: req
+        ) {
+            // 2b. Vision landmark bulamadı ama multimodal LLM görselden bir mekan
+            // çıkarabildi. Koordinat bilgisi LLM'den gelmediği için kullanıcının
+            // gönderdiği koordinatı (varsa) yansıtırız; emin olmadığı durumlarda
+            // model UNKNOWN döndüğü için buraya yalnızca pozitif tanımlamalar düşer.
+            req.logger.info("[scan] place identified via LLM_VISION: \(identified)")
+            placeName = identified
+            placeLatitude = userLatitude
+            placeLongitude = userLongitude
+            confidence = 0.5
         } else if let userLatitude, let userLongitude,
                   let place = try await PlacesService.nearbySearch(
                       latitude: userLatitude, longitude: userLongitude, on: req) {
-            // 2b. Vision boş döndü, koordinatla Places fallback. Bu yalnızca bir
-            // tahmin olduğu için confidence, iOS'in uyarı eşiği olan 0.6'nın altında tutulur.
+            // 2c. LLM de bulamadı, son çare koordinatla Places nearby search. Bu
+            // yalnızca bir tahmin olduğu için confidence iOS uyarı eşiğinin altında tutulur.
+            req.logger.info("[scan] place identified via PLACES_NEARBY: \(place.name)")
             placeName = place.name
             placeLatitude = place.latitude
             placeLongitude = place.longitude

@@ -56,8 +56,8 @@ docker-compose up
 | `JWT_SECRET`           | JWT imzalama anahtarı (HMAC-SHA256)   | `dev-only-secret-change-in-production`  |
 | `APPLE_APP_BUNDLE_ID`  | Apple Sign In için uygulama bundle ID | —                                       |
 | `GOOGLE_API_KEY`       | Google Cloud Vision + Places API anahtarı | —                                   |
-| `ANTHROPIC_API_KEY`    | Anthropic API anahtarı (anlatım üretimi) | —                                    |
-| `LLM_MODEL`            | Anlatım için kullanılan LLM modeli    | `claude-opus-4-7`                       |
+| `OPENAI_API_KEY`       | OpenAI API anahtarı (anlatım üretimi) | —                                       |
+| `LLM_MODEL`            | Anlatım için kullanılan LLM modeli    | `gpt-4o`                                |
 
 > **Not:** Üretim ortamında `JWT_SECRET` mutlaka değiştirilmelidir.
 
@@ -178,7 +178,7 @@ JWT gerektirir. `multipart/form-data` ile fotoğraf ve tercihler gönderilir.
 
 1. Görsel Google Cloud Vision'a `LANDMARK_DETECTION` ile gönderilir.
 2. Koordinat geldiyse landmark adayları konuma göre teyit edilir. Vision hiç landmark bulamaz ve koordinat varsa Google Places nearby search ile en olası mekan bulunur.
-3. Tespit edilen mekan, `style` ve `duration`'a uygun bir anlatım için LLM'e verilir (sabit sistem talimatı prompt caching ile önbelleğe alınır).
+3. Tespit edilen mekan, `style` ve `duration`'a uygun bir anlatım için OpenAI Chat Completions API'ye verilir (sabit sistem talimatı OpenAI tarafından otomatik prompt caching'e tabidir).
 
 Yanıt `200 OK`:
 
