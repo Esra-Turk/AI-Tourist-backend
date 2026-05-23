@@ -247,6 +247,59 @@ iOS, `confidence < 0.6` olduğunda kullanıcıya "emin değiliz" uyarısı göst
 | `422 Unprocessable Entity`     | Üç fallback de mekanı tanıyamadı.                                |
 | `502 Bad Gateway`              | Vision / Places / OpenAI servislerinden biri başarısız oldu.     |
 
+#### `GET /scans` — Kullanıcının tarama geçmişi 🔒
+
+JWT gerektirir. Giriş yapan kullanıcının tüm taramalarını **en yeniden eskiye** sıralı döner. Başka kullanıcının taramaları görünmez.
+
+Yanıt `200 OK`:
+
+```json
+[
+  {
+    "id": "b1f0c2a4-...-...",
+    "placeName": "Hagia Sophia",
+    "latitude": 41.0086,
+    "longitude": 28.9802,
+    "confidence": 0.92,
+    "narration": "Stand before the soaring dome...",
+    "style": "historical",
+    "duration": "oneMinute",
+    "createdAt": "2026-05-23T10:14:00Z"
+  }
+]
+```
+
+| Alan         | Tip            | Açıklama                                                              |
+|--------------|----------------|-----------------------------------------------------------------------|
+| `id`         | UUID           | Tarama kimliği (detay / silme endpoint'leri için kullanılır).        |
+| `placeName`  | String         | Tarama anında tespit edilen mekan adı.                                |
+| `latitude`   | Number \| null | Mekanın enlemi; bilinmiyorsa `null`.                                  |
+| `longitude`  | Number \| null | Mekanın boylamı; bilinmiyorsa `null`.                                 |
+| `confidence` | Number (0–1)   | Tarama anındaki güven skoru.                                          |
+| `narration`  | String         | O tarama için üretilmiş anlatım metni.                                |
+| `style`      | String         | Tarama anında seçilen stil (`fun` \| `historical` \| `simple` \| `detailed`). |
+| `duration`   | String         | Tarama anında seçilen süre (`thirtySeconds` \| `oneMinute` \| `threeMinutes`). |
+| `createdAt`  | Date \| null   | Taramanın oluşturulma zamanı (ISO 8601).                              |
+
+#### `GET /scans/:scanID` — Tek tarama detayı 🔒
+
+JWT gerektirir. Sadece taramanın **sahibi** erişebilir; başka kullanıcının kaydı için `404 Not Found` döner. Yanıt gövdesi `GET /scans` listesindeki bir öğeyle aynı şemadadır.
+
+| Durum               | Sebep                                                |
+|---------------------|------------------------------------------------------|
+| `400 Bad Request`   | `scanID` geçerli bir UUID değil.                     |
+| `401 Unauthorized`  | JWT eksik / geçersiz / süresi dolmuş.                |
+| `404 Not Found`     | Tarama yok ya da başka bir kullanıcıya ait.          |
+
+#### `DELETE /scans/:scanID` — Geçmişten tarama sil 🔒
+
+JWT gerektirir. Sadece taramanın **sahibi** silebilir.
+
+- Başarılı: `204 No Content`
+- `400 Bad Request` — `scanID` geçerli bir UUID değil
+- `401 Unauthorized` — JWT eksik / geçersiz / süresi dolmuş
+- `404 Not Found` — Tarama yok ya da başka bir kullanıcıya ait
+
 ### Todo (örnek/şablon)
 
 | Method | Yol                  | Açıklama                |
@@ -297,5 +350,5 @@ Sources/TouristGuideBackend/
 
 ## Yapılacaklar / Notlar
 
-- `POST /scan` ile fotoğraftan mekan tanıma ve sesli rehber anlatımı eklendi. Tur/rehber yönetimi gibi diğer özellikler henüz yok.
+- `POST /scan` ile fotoğraftan mekan tanıma ve sesli rehber anlatımı eklendi. Her başarılı tarama `scans` tablosuna kullanıcıya bağlı olarak kaydedilir; `GET /scans`, `GET /scans/:scanID` ve `DELETE /scans/:scanID` ile geçmiş listelenip yönetilebilir. Tur/rehber yönetimi gibi diğer özellikler henüz yok.
 - Todo modülü Vapor şablonundan gelmektedir; ileride kaldırılabilir.

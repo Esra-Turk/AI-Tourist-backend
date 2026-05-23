@@ -32,12 +32,84 @@ struct ScanResponse: Content {
     let narration: String
 }
 
+struct ScanHistoryItem: Content {
+    let id: UUID
+    let placeName: String
+    let latitude: Double?
+    let longitude: Double?
+    let confidence: Double
+    let narration: String
+    let style: String
+    let duration: String
+    let createdAt: Date?
+}
+
 struct ScanController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
         // Auth, mevcut endpoint'lerle aynı middleware ile yapılır; geçersiz token => 401.
         let protected = routes.grouped(UserAuthenticator(), User.guardMiddleware())
         // Görsel birkaç MB olabileceği için body limiti yükseltilir.
         protected.on(.POST, "scan", body: .collect(maxSize: "10mb"), use: scan)
+
+        // History endpoint'leri — kullanıcının kendi taramaları.
+        let scans = protected.grouped("scans")
+        scans.get(use: history)
+        scans.group(":scanID") { scan in
+            scan.get(use: detail)
+            scan.delete(use: delete)
+        }
+    }
+
+    @Sendable
+    func history(req: Request) async throws -> [ScanHistoryItem] {
+        let user = try req.auth.require(User.self)
+        let userID = try user.requireID()
+        let scans = try await Scan.query(on: req.db)
+            .filter(\.$user.$id == userID)
+            .sort(\.$createdAt, .descending)
+            .all()
+        return try scans.map(Self.makeHistoryItem)
+    }
+
+    @Sendable
+    func detail(req: Request) async throws -> ScanHistoryItem {
+        return try Self.makeHistoryItem(from: try await loadOwnedScan(req: req))
+    }
+
+    @Sendable
+    func delete(req: Request) async throws -> HTTPStatus {
+        let scan = try await loadOwnedScan(req: req)
+        try await scan.delete(on: req.db)
+        return .noContent
+    }
+
+    private func loadOwnedScan(req: Request) async throws -> Scan {
+        let user = try req.auth.require(User.self)
+        let userID = try user.requireID()
+        guard let scanID = req.parameters.get("scanID", as: UUID.self) else {
+            throw Abort(.badRequest, reason: "Invalid scan id.")
+        }
+        guard let scan = try await Scan.query(on: req.db)
+            .filter(\.$id == scanID)
+            .filter(\.$user.$id == userID)
+            .first() else {
+            throw Abort(.notFound)
+        }
+        return scan
+    }
+
+    private static func makeHistoryItem(from scan: Scan) throws -> ScanHistoryItem {
+        ScanHistoryItem(
+            id: try scan.requireID(),
+            placeName: scan.placeName,
+            latitude: scan.latitude,
+            longitude: scan.longitude,
+            confidence: scan.confidence,
+            narration: scan.narration,
+            style: scan.style,
+            duration: scan.duration,
+            createdAt: scan.createdAt
+        )
     }
 
     @Sendable
