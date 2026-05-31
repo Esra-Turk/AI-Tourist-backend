@@ -6,8 +6,8 @@ import JWT
 
 // configures your application
 public func configure(_ app: Application) async throws {
-    // uncomment to serve files from /Public folder
-    // app.middleware.use(FileMiddleware(publicDirectory: app.directory.publicDirectory))
+    // Scan history için yüklenen görseller Public/uploads/scans altında tutulur.
+    app.middleware.use(FileMiddleware(publicDirectory: app.directory.publicDirectory))
 
     app.databases.use(DatabaseConfigurationFactory.postgres(configuration: .init(
         hostname: Environment.get("DATABASE_HOST") ?? "localhost",
@@ -30,6 +30,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateTodo())
     app.migrations.add(CreateUser())
     app.migrations.add(CreateScan())
+    app.migrations.add(AddScanImagePath())
 
     // register routes
     try routes(app)

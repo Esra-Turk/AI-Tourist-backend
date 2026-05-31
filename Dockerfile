@@ -77,6 +77,14 @@ WORKDIR /app
 # Copy built executable and any staged resources from builder
 COPY --from=build --chown=vapor:vapor /staging /app
 
+# Scan görsellerinin saklandığı klasör — diğer Public içeriği read-only kalır
+# ama buraya runtime'da yazmamız gerekiyor. docker-compose burayı named volume
+# ile mount eder; yine de imajda da var + writable olsun ki volume mount
+# sırasında izinler doğru başlasın.
+RUN mkdir -p /app/Public/uploads/scans \
+    && chown -R vapor:vapor /app/Public/uploads \
+    && chmod -R u+w /app/Public/uploads
+
 # Provide configuration needed by the built-in crash reporter and some sensible default behaviors.
 ENV SWIFT_BACKTRACE=enable=yes,sanitize=yes,threads=all,images=all,interactive=no,swift-backtrace=./swift-backtrace-static
 

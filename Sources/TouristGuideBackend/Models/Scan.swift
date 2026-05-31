@@ -31,6 +31,9 @@ final class Scan: Model, @unchecked Sendable {
     @Field(key: "duration")
     var duration: String
 
+    @OptionalField(key: "image_path")
+    var imagePath: String?
+
     @Timestamp(key: "created_at", on: .create)
     var createdAt: Date?
 
@@ -45,7 +48,8 @@ final class Scan: Model, @unchecked Sendable {
         confidence: Double,
         narration: String,
         style: String,
-        duration: String
+        duration: String,
+        imagePath: String? = nil
     ) {
         self.id = id
         self.$user.id = userID
@@ -56,5 +60,6 @@ final class Scan: Model, @unchecked Sendable {
         self.narration = narration
         self.style = style
         self.duration = duration
+        self.imagePath = imagePath
     }
 }

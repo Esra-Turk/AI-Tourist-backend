@@ -25,11 +25,13 @@ struct ScanRequest: Content {
 }
 
 struct ScanResponse: Content {
+    let id: UUID
     let placeName: String
     let confidence: Double
     let latitude: Double?
     let longitude: Double?
     let narration: String
+    let imageURL: String?
 }
 
 struct ScanHistoryItem: Content {
@@ -41,6 +43,7 @@ struct ScanHistoryItem: Content {
     let narration: String
     let style: String
     let duration: String
+    let imageURL: String?
     let createdAt: Date?
 }
 
@@ -79,7 +82,13 @@ struct ScanController: RouteCollection {
     @Sendable
     func delete(req: Request) async throws -> HTTPStatus {
         let scan = try await loadOwnedScan(req: req)
+        let imagePath = scan.imagePath
         try await scan.delete(on: req.db)
+        // DB silindikten sonra fiziksel dosyayı best-effort olarak temizle —
+        // silme başarısız olsa bile kullanıcı için scan kaydı zaten gitti.
+        if let imagePath {
+            Self.removeImage(at: imagePath, on: req)
+        }
         return .noContent
     }
 
@@ -108,6 +117,7 @@ struct ScanController: RouteCollection {
             narration: scan.narration,
             style: scan.style,
             duration: scan.duration,
+            imageURL: scan.imagePath.map { "/" + $0 },
             createdAt: scan.createdAt
         )
     }
@@ -183,8 +193,19 @@ struct ScanController: RouteCollection {
             on: req
         )
 
-        // 4. Tarama sonucunu kullanıcıya bağlı olarak kaydet.
+        // 4. Görseli diske yaz. Scan ID'sini önden üretiriz ki dosya adı
+        // ile DB kaydı 1-1 eşleşsin — silmek/temizlemek bu sayede kolay.
+        let scanID = UUID()
+        let imagePath = try Self.persistImage(
+            imageData: imageData,
+            scanID: scanID,
+            originalExtension: input.image.extension,
+            on: req
+        )
+
+        // 5. Tarama sonucunu kullanıcıya bağlı olarak kaydet.
         let scan = Scan(
+            id: scanID,
             userID: userID,
             placeName: placeName,
             latitude: placeLatitude,
@@ -192,17 +213,73 @@ struct ScanController: RouteCollection {
             confidence: confidence,
             narration: narration,
             style: input.style.rawValue,
-            duration: input.duration.rawValue
+            duration: input.duration.rawValue,
+            imagePath: imagePath
         )
-        try await scan.save(on: req.db)
+        do {
+            try await scan.save(on: req.db)
+        } catch {
+            // DB kaydı başarısızsa diskte sahipsiz dosya bırakmayalım.
+            Self.removeImage(at: imagePath, on: req)
+            throw error
+        }
 
         return ScanResponse(
+            id: scanID,
             placeName: placeName,
             confidence: confidence,
             latitude: placeLatitude,
             longitude: placeLongitude,
-            narration: narration
+            narration: narration,
+            imageURL: "/" + imagePath
         )
+    }
+
+    // Görseli Public/uploads/scans/{scanID}.{ext} olarak yazar ve DB'ye
+    // kaydedilecek göreceli path'i ("uploads/scans/...") döner. FileMiddleware
+    // bu klasörü doğrudan servis ettiği için iOS '/' önekiyle GET edebilir.
+    private static func persistImage(
+        imageData: Data,
+        scanID: UUID,
+        originalExtension: String?,
+        on req: Request
+    ) throws -> String {
+        let ext = sanitizedExtension(originalExtension) ?? "jpg"
+        let relativePath = "uploads/scans/\(scanID.uuidString).\(ext)"
+        let publicDirectory = req.application.directory.publicDirectory
+        let dirURL = URL(fileURLWithPath: publicDirectory)
+            .appendingPathComponent("uploads/scans", isDirectory: true)
+        let fileURL = dirURL.appendingPathComponent("\(scanID.uuidString).\(ext)")
+        do {
+            try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+            try imageData.write(to: fileURL, options: .atomic)
+        } catch {
+            req.logger.error("[scan] failed to write image: \(error)")
+            throw Abort(.internalServerError, reason: "Failed to persist scan image.")
+        }
+        return relativePath
+    }
+
+    private static func removeImage(at relativePath: String, on req: Request) {
+        let publicDirectory = req.application.directory.publicDirectory
+        let fileURL = URL(fileURLWithPath: publicDirectory)
+            .appendingPathComponent(relativePath)
+        do {
+            try FileManager.default.removeItem(at: fileURL)
+        } catch CocoaError.fileNoSuchFile {
+            // Zaten yoksa sorun değil.
+        } catch {
+            req.logger.warning("[scan] failed to remove image \(relativePath): \(error)")
+        }
+    }
+
+    // Yalnızca beklenen görsel uzantılarına izin ver — path traversal ve
+    // sürpriz mime'lere karşı küçük bir kalkan.
+    private static func sanitizedExtension(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let lowered = raw.lowercased()
+        let allowed: Set<String> = ["jpg", "jpeg", "png", "heic", "heif", "webp"]
+        return allowed.contains(lowered) ? lowered : nil
     }
 
     // Koordinat geldiyse, ona en yakın adayı seçer — böylece uzaktaki yanlış bir
